@@ -455,7 +455,7 @@ function showError(msg)  {
 }
 
 // ── Marker placeholder ───────────────────────────────────────────────
-function markerPlaceholder() {
+window.markerPlaceholder = function markerPlaceholder() {
   return `<div style="width:140px;height:140px;border:2px dashed rgba(0,229,255,0.4);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:12px;text-align:center;">
     <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
       <rect x="2" y="2" width="36" height="36" stroke="#00e5ff" stroke-width="1.5" stroke-dasharray="4 2"/>
@@ -627,7 +627,7 @@ async function startAR() {
 
     // ── GLTF Loader ──
     // GLTF + DRACO loaders (imported as ES modules)
-    const loader = new GLTFLoader();
+    loader = new GLTFLoader();
     const draco = new DRACOLoader();
     draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
     loader.setDRACOLoader(draco);
