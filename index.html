@@ -424,7 +424,7 @@ let STEPS = [];          // filled from manifest.json
 let currentStep = 0;
 let playing = false;
 let playTimer = null;
-let playInterval = 500; // ms per step — controlled by slider
+let playInterval = 150; // ms per step — controlled by slider
 
 // Loaded Three.js objects per step (null = not yet loaded)
 const loadedModels = [];
@@ -564,7 +564,16 @@ async function startAR() {
       return Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
     }
 
+    const playbar = document.getElementById('playbar');
+
+    function onHUD(e) {
+      // Returns true if the touch/click originated inside the playbar
+      const t = e.touches ? e.touches[0] : e;
+      return playbar.contains(document.elementFromPoint(t.clientX, t.clientY));
+    }
+
     document.addEventListener('touchstart', e => {
+      if (onHUD(e)) return; // let HUD handle its own touches
       if (e.touches.length === 2) {
         pinchStart = dist(e.touches);
         scaleStart = currentScale;
@@ -575,6 +584,7 @@ async function startAR() {
     }, { passive: false });
 
     document.addEventListener('touchmove', e => {
+      if (onHUD(e)) return;
       if (e.touches.length === 2 && pinchStart) {
         currentScale = Math.max(0.1, Math.min(5, scaleStart * dist(e.touches) / pinchStart));
         pivot.scale.setScalar(currentScale);
@@ -583,7 +593,7 @@ async function startAR() {
         const dy = e.touches[0].clientY - dragStart.y;
         rotY += dx * 0.01;
         rotX += dy * 0.01;
-        rotX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotX)); // clamp vertical
+        rotX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotX));
         pivot.rotation.y = rotY;
         pivot.rotation.x = rotX;
         dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
@@ -687,40 +697,10 @@ async function startAR() {
       }
     }
 
-    function setModelOpacity(model, opacity) {
-      model.traverse(obj => {
-        if (obj.isMesh) {
-          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-          mats.forEach(mat => {
-            mat.transparent = opacity < 1;
-            mat.opacity = opacity;
-            mat.needsUpdate = true;
-          });
-        }
-      });
-    }
-
     function crossfadeTo(newModel) {
-      const old = activeModel;
+      if (activeModel) activeModel.visible = false;
       activeModel = newModel;
       newModel.visible = true;
-      setModelOpacity(newModel, 0);
-
-      const duration = Math.min(200, playInterval * 0.3);
-      const steps = 10;
-      const stepTime = duration / steps;
-      let i = 0;
-      const fade = setInterval(() => {
-        i++;
-        const t = i / steps;
-        setModelOpacity(newModel, t);
-        if (old) setModelOpacity(old, 1 - t);
-        if (i >= steps) {
-          clearInterval(fade);
-          if (old) old.visible = false;
-          setModelOpacity(newModel, 1);
-        }
-      }, stepTime);
     }
 
     function showStep(index) {
