@@ -651,12 +651,12 @@ async function startAR() {
     track.addEventListener('click', scrubTo);
     track.addEventListener('touchstart', scrubTo, { passive: true });
 
-    // Preload last frame first to calibrate global scale, then show step 0
+    // Load last frame first to calibrate global scale, THEN show step 0
     if (STEPS.length > 1) {
-      loadStep(STEPS.length - 1).catch(() => {}).finally(() => showStep(0));
-    } else {
-      showStep(0);
+      setStatus('calibrating scale...');
+      try { await loadStep(STEPS.length - 1); } catch(e) {}
     }
+    showStep(0);
 
     // ── Start MindAR ──
     await mindarThree.start();
@@ -712,12 +712,12 @@ function loadStep(index) {
         const box = new THREE.Box3().setFromObject(model);
         const size = box.getSize(new THREE.Vector3());
 
-        // Use the LAST frame's scale as reference — it has the most particles
-        // so all frames stay the same size instead of shrinking as particles appear
-        if (index === STEPS.length - 1 || globalScaleFactor === null) {
+        // Set scale only from last frame (most particles = largest extent)
+        // Never overwrite once set
+        if (globalScaleFactor === null) {
           const maxDim = Math.max(size.x, size.y, size.z);
           globalScaleFactor = 0.8 / maxDim;
-          globalCenter = box.getCenter(new THREE.Vector3());
+          globalCenter = box.getCenter(new THREE.Vector3()).clone();
         }
 
         const scaleFactor = globalScaleFactor;
