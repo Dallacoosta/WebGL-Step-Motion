@@ -430,6 +430,9 @@ let playInterval = 150; // ms per step — controlled by slider
 const loadedModels = [];
 let activeModel = null;
 let anchor = null;       // MindAR anchor group
+let loader = null;       // GLTFLoader instance (set in startAR)
+let pivot  = null;       // rotation/scale group (set in startAR)
+let rotX = 0, rotY = 0, currentScale = 1;
 
 // ── DOM refs ──────────────────────────────────────────
 const statusMsg    = document.getElementById('status-msg');
@@ -541,7 +544,7 @@ async function startAR() {
     anchor = mindarThree.addAnchor(0);
 
     // Pivot sits inside anchor.group — gestures rotate/scale pivot, not the anchor
-    const pivot = new THREE.Group();
+    pivot = new THREE.Group();
     anchor.group.add(pivot);
 
     // Marker found / lost events
@@ -557,8 +560,6 @@ async function startAR() {
     // ── Gesture: pinch-to-scale + drag-to-rotate ──
     let pinchStart = null, scaleStart = 1;
     let dragStart = null;
-    let currentScale = 1;
-    let rotY = 0, rotX = 0;
 
     function dist(t) {
       return Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
@@ -567,13 +568,13 @@ async function startAR() {
     const playbar = document.getElementById('playbar');
 
     function onHUD(e) {
-      // Returns true if the touch/click originated inside the playbar
       const t = e.touches ? e.touches[0] : e;
-      return playbar.contains(document.elementFromPoint(t.clientX, t.clientY));
+      const rect = playbar.getBoundingClientRect();
+      return t.clientY >= rect.top;
     }
 
     document.addEventListener('touchstart', e => {
-      if (onHUD(e)) return; // let HUD handle its own touches
+      if (onHUD(e)) return;
       if (e.touches.length === 2) {
         pinchStart = dist(e.touches);
         scaleStart = currentScale;
@@ -631,108 +632,9 @@ async function startAR() {
     draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
     loader.setDRACOLoader(draco);
 
-    function loadStep(index) {
-      return new Promise((resolve, reject) => {
-        if (loadedModels[index]) { resolve(loadedModels[index]); return; }
-        loader.load(
-          STEPS[index].url,
-          gltf => {
-            const model = gltf.scene;
 
-            // Force all materials to be visible (handles missing textures/vertex colors)
-            model.traverse(obj => {
-              if (obj.isMesh) {
-                // If material has no map and no vertex colors, give it a default color
-                if (obj.material) {
-                  const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-                  mats.forEach(mat => {
-                    mat.side = THREE.DoubleSide;
-                    if (!mat.map && !mat.vertexColors) {
-                      mat.color = mat.color || new THREE.Color(0x00e5ff);
-                    }
-                    mat.needsUpdate = true;
-                  });
-                }
-              }
-            });
 
-            // Auto-center and auto-scale to fit on marker (1 unit)
-            const box = new THREE.Box3().setFromObject(model);
-            const size = box.getSize(new THREE.Vector3());
-            const center = box.getCenter(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const scaleFactor = 0.8 / maxDim;
-
-            // Center the model on the marker: offset by center, lift so bottom sits on marker
-            model.scale.setScalar(scaleFactor);
-            model.position.set(
-              -center.x * scaleFactor,
-              -center.y * scaleFactor,
-              // Shift up so the model base is at z=0 (marker plane) and floats above
-              (-box.min.z + 0.1) * scaleFactor
-            );
-            model.visible = false;
-            pivot.add(model);
-            loadedModels[index] = model;
-            updateDot(index, 'loaded');
-            setStatus(`model loaded — ${Math.round(size.x*100)}x${Math.round(size.y*100)}x${Math.round(size.z*100)}cm`);
-            resolve(model);
-          },
-          xhr => {
-            if (index === currentStep && xhr.total) {
-              const pct = Math.round(xhr.loaded / xhr.total * 100);
-              setStatus(`loading step ${index+1}... ${pct}%`);
-            }
-          },
-          err => reject(err)
-        );
-      });
-    }
-
-    function updateDot(i, state) {
-      const d = document.getElementById(`dot-${i}`);
-      if (d) {
-        d.className = 'dot';
-        if (state) d.classList.add(state);
-      }
-    }
-
-    function crossfadeTo(newModel) {
-      if (activeModel) activeModel.visible = false;
-      activeModel = newModel;
-      newModel.visible = true;
-    }
-
-    function showStep(index) {
-      currentStep = index;
-      stepPill.textContent = `STEP ${index+1} / ${STEPS.length}`;
-      updateProgress(index);
-      updateDot(index, 'current');
-
-      if (loadedModels[index]) {
-        crossfadeTo(loadedModels[index]);
-        setStatus(STEPS[index].label || `step ${index+1} of ${STEPS.length}`);
-      } else {
-        setStatus(`loading step ${index+1}...`);
-        loadStep(index).then(model => {
-          if (currentStep === index) {
-            crossfadeTo(model);
-            setStatus(STEPS[index].label || `step ${index+1} of ${STEPS.length}`);
-          }
-        }).catch(e => setStatus('load error: ' + e.message));
-      }
-
-      // Preload next 2 steps silently
-      [index + 1, index + 2].forEach(i => {
-        if (i < STEPS.length && !loadedModels[i]) loadStep(i).catch(() => {});
-      });
-    }
-
-    function updateProgress(index) {
-      const pct = STEPS.length > 1 ? (index / (STEPS.length - 1)) * 100 : 100;
-      progressFill.style.width  = pct + '%';
-      progressThumb.style.left  = pct + '%';
-    }
+    // showStep, crossfadeTo, updateProgress, updateDot are global (defined below startAR)
 
     // Progress track click/drag
     const track = document.getElementById('progress-track');
@@ -763,6 +665,91 @@ async function startAR() {
     showError('Camera error: ' + e.message + '\n\nMake sure you are on HTTPS and allowed camera access.');
     console.error(e);
   }
+}
+
+// ── Global model/step functions ───────────────────────
+function updateDot(i, state) {
+  const d = document.getElementById(`dot-${i}`);
+  if (d) { d.className = 'dot'; if (state) d.classList.add(state); }
+}
+
+function updateProgress(index) {
+  const pct = STEPS.length > 1 ? (index / (STEPS.length - 1)) * 100 : 100;
+  progressFill.style.width = pct + '%';
+  progressThumb.style.left = pct + '%';
+}
+
+function crossfadeTo(newModel) {
+  if (activeModel) activeModel.visible = false;
+  activeModel = newModel;
+  newModel.visible = true;
+}
+
+function loadStep(index) {
+  return new Promise((resolve, reject) => {
+    if (loadedModels[index]) { resolve(loadedModels[index]); return; }
+    if (!loader) { reject(new Error('loader not ready')); return; }
+    loader.load(
+      STEPS[index].url,
+      gltf => {
+        const model = gltf.scene;
+        model.traverse(obj => {
+          if (obj.isMesh) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            mats.forEach(mat => {
+              mat.side = THREE.DoubleSide;
+              if (!mat.map && !mat.vertexColors) mat.color = new THREE.Color(0x00e5ff);
+              mat.needsUpdate = true;
+            });
+          }
+        });
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const scaleFactor = 0.8 / maxDim;
+        model.scale.setScalar(scaleFactor);
+        model.position.set(
+          -center.x * scaleFactor,
+          -center.y * scaleFactor,
+          (-box.min.z + 0.1) * scaleFactor
+        );
+        model.visible = false;
+        if (pivot) pivot.add(model);
+        loadedModels[index] = model;
+        updateDot(index, 'loaded');
+        resolve(model);
+      },
+      xhr => {
+        if (index === currentStep && xhr.total) {
+          setStatus(`loading step ${index+1}... ${Math.round(xhr.loaded/xhr.total*100)}%`);
+        }
+      },
+      err => reject(err)
+    );
+  });
+}
+
+function showStep(index) {
+  currentStep = index;
+  stepPill.textContent = `STEP ${index+1} / ${STEPS.length}`;
+  updateProgress(index);
+  updateDot(index, 'current');
+  if (loadedModels[index]) {
+    crossfadeTo(loadedModels[index]);
+    setStatus(STEPS[index].label || `step ${index+1} of ${STEPS.length}`);
+  } else {
+    setStatus(`loading step ${index+1}...`);
+    loadStep(index).then(model => {
+      if (currentStep === index) {
+        crossfadeTo(model);
+        setStatus(STEPS[index].label || `step ${index+1} of ${STEPS.length}`);
+      }
+    }).catch(e => setStatus('load error: ' + e.message));
+  }
+  [index+1, index+2].forEach(i => {
+    if (i < STEPS.length && !loadedModels[i]) loadStep(i).catch(() => {});
+  });
 }
 
 // ── Playback controls ─────────────────────────────────
