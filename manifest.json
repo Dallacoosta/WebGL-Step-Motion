@@ -1,9 +1,108 @@
 {
   "steps": [
-    { "url": "https://github.com/YOUR_USER/YOUR_REPO/releases/download/v1.0/step_001.glb", "label": "t = 0.0s" },
-    { "url": "https://github.com/YOUR_USER/YOUR_REPO/releases/download/v1.0/step_002.glb", "label": "t = 0.5s" },
-    { "url": "https://github.com/YOUR_USER/YOUR_REPO/releases/download/v1.0/step_003.glb", "label": "t = 1.0s" },
-    { "url": "https://github.com/YOUR_USER/YOUR_REPO/releases/download/v1.0/step_004.glb", "label": "t = 1.5s" },
-    { "url": "https://github.com/YOUR_USER/YOUR_REPO/releases/download/v1.0/step_005.glb", "label": "t = 2.0s" }
+    {
+      "url": "step_001.glb",
+      "label": "frame 1"
+    },
+    {
+      "url": "step_002.glb",
+      "label": "frame 2"
+    },
+    {
+      "url": "step_003.glb",
+      "label": "frame 3"
+    },
+    {
+      "url": "step_004.glb",
+      "label": "frame 4"
+    },
+    {
+      "url": "step_005.glb",
+      "label": "frame 5"
+    },
+    {
+      "url": "step_006.glb",
+      "label": "frame 6"
+    },
+    {
+      "url": "step_007.glb",
+      "label": "frame 7"
+    },
+    {
+      "url": "step_008.glb",
+      "label": "frame 8"
+    },
+    {
+      "url": "step_009.glb",
+      "label": "frame 9"
+    },
+    {
+      "url": "step_010.glb",
+      "label": "frame 10"
+    },
+    {
+      "url": "step_011.glb",
+      "label": "frame 11"
+    },
+    {
+      "url": "step_012.glb",
+      "label": "frame 12"
+    },
+    {
+      "url": "step_013.glb",
+      "label": "frame 13"
+    },
+    {
+      "url": "step_014.glb",
+      "label": "frame 14"
+    },
+    {
+      "url": "step_015.glb",
+      "label": "frame 15"
+    },
+    {
+      "url": "step_016.glb",
+      "label": "frame 16"
+    },
+    {
+      "url": "step_017.glb",
+      "label": "frame 17"
+    },
+    {
+      "url": "step_018.glb",
+      "label": "frame 18"
+    },
+    {
+      "url": "step_019.glb",
+      "label": "frame 19"
+    },
+    {
+      "url": "step_020.glb",
+      "label": "frame 20"
+    },
+    {
+      "url": "step_021.glb",
+      "label": "frame 21"
+    },
+    {
+      "url": "step_022.glb",
+      "label": "frame 22"
+    },
+    {
+      "url": "step_023.glb",
+      "label": "frame 23"
+    },
+    {
+      "url": "step_024.glb",
+      "label": "frame 24"
+    },
+    {
+      "url": "step_025.glb",
+      "label": "frame 25"
+    },
+    {
+      "url": "step_026.glb",
+      "label": "frame 26"
+    }
   ]
 }
