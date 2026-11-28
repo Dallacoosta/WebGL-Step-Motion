@@ -419,70 +419,167 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { MindARThree } from 'mindar-image-three';
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+// ═══════════════════════════════════════════════════════
+//  REALTIME SYNC
+//  SYNC_PROVIDER = 'mqtt'     → free public relay, no account needed (default)
+//  SYNC_PROVIDER = 'supabase' → your own Supabase project (fill in the two values below)
+// ═══════════════════════════════════════════════════════
+const SYNC_PROVIDER = 'mqtt';
 
-// ═══════════════════════════════════════════════════════
-//  REALTIME SYNC (Supabase Broadcast + Presence)
-//  Supabase dashboard → Project Settings → API
-//  The anon key is public by design; it is safe in client code.
-// ═══════════════════════════════════════════════════════
+// — Option 1: MQTT public broker (no account) —
+const MQTT_URL = 'wss://broker.hivemq.com:8884/mqtt';   // alternative: 'wss://broker.emqx.io:8084/mqtt'
+const MQTT_TOPIC_PREFIX = 'asc-ar-viewer-v1';            // public broker: change to something unique to you
+
+// — Option 2: Supabase (Project Settings → API; the anon key is public by design) —
 const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
 const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
+
 const THROTTLE_MS = 50; // max ~20 transform messages per second
 
-function initSync({ getState, onPatch, onPeers, onStatus }) {
+const getRoom = () =>
+  (new URLSearchParams(location.search).get('room') || 'default').replace(/[^\w-]/g, '') || 'default';
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// send(patch)       → immediate (play, pause, step, speed)
+// send(patch, true) → throttled, trailing edge always delivered (rotate / scale)
+function makeSender(publish) {
+  let pending = null, timer = null;
+  function flush() {
+    timer = null;
+    if (!pending) return;
+    const p = pending;
+    pending = null;
+    publish(p);
+  }
+  return function send(patch, throttle = false) {
+    pending = { ...(pending || {}), ...patch };
+    if (!throttle) { clearTimeout(timer); flush(); }
+    else if (!timer) timer = setTimeout(flush, THROTTLE_MS);
+  };
+}
+
+// ── Provider 1: MQTT over WebSocket (public broker) ───
+function initMqttSync({ getState, onPatch, onPeers, onStatus }) {
+  const room = getRoom();
+  const me = crypto.randomUUID();
+  const base = `${MQTT_TOPIC_PREFIX}/${room}`;
+  const peers = new Map();   // peer id -> last time we heard from it
+  let client = null;
+
+  const publish = (kind, body) => {
+    if (client && client.connected) {
+      client.publish(`${base}/${kind}`, JSON.stringify({ from: me, body }));
+    }
+  };
+  const send = makeSender(payload => publish('patch', payload));
+
+  const recount = () => {
+    const now = Date.now();
+    for (const [id, t] of peers) if (now - t > 9000) peers.delete(id);
+    onPeers(1 + peers.size, room);
+  };
+
+  loadScript('https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js').then(() => {
+    client = window.mqtt.connect(MQTT_URL, {
+      clientId: `asc-ar-${me.slice(0, 8)}`,
+      clean: true,
+      reconnectPeriod: 2000,
+      connectTimeout: 10000,
+    });
+
+    client.on('connect', () => {
+      client.subscribe(`${base}/+`, err => {
+        if (err) { onStatus?.('CHANNEL_ERROR', err); return; }
+        console.log('[sync] mqtt connected, room:', room);
+        onStatus?.('SUBSCRIBED');
+        publish('hello', {});
+        publish('presence', {});
+        recount();
+      });
+    });
+
+    client.on('message', (topic, buf) => {
+      let msg;
+      try { msg = JSON.parse(buf.toString()); } catch { return; }
+      if (!msg || msg.from === me) return;
+
+      const kind = topic.slice(base.length + 1);
+      const isNew = !peers.has(msg.from);
+      peers.set(msg.from, Date.now());
+
+      if (kind === 'bye') { peers.delete(msg.from); recount(); return; }
+      if (isNew) recount();
+
+      if (kind === 'patch') onPatch(msg.body);
+      else if (kind === 'hello') {          // a new device joined → give it the full state
+        publish('patch', getState());
+        publish('presence', {});
+      }
+    });
+
+    client.on('error', err => { console.error('[sync] mqtt error', err); onStatus?.('CHANNEL_ERROR', err); });
+    client.on('close', () => onStatus?.('CLOSED'));
+
+    setInterval(() => { publish('presence', {}); recount(); }, 3000);
+    window.addEventListener('pagehide', () => publish('bye', {}));
+  }).catch(err => { console.error('[sync]', err); onStatus?.('CHANNEL_ERROR', err); });
+
+  return { send, room };
+}
+
+// ── Provider 2: Supabase Realtime ─────────────────────
+function initSupabaseSync({ getState, onPatch, onPeers, onStatus }) {
   if (SUPABASE_URL.includes('YOUR-PROJECT') || SUPABASE_ANON_KEY.includes('YOUR-ANON')) {
     onStatus?.('NOT_CONFIGURED');
     return null;
   }
-  const room = new URLSearchParams(location.search).get('room') || 'default';
+  const room = getRoom();
   const clientId = crypto.randomUUID();
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  let channel = null;
+  let ready = false;
 
-  const channel = supabase.channel(`asc-ar-${room}`, {
-    config: {
-      broadcast: { self: false },
-      presence: { key: clientId },
-    },
+  const send = makeSender(payload => {
+    if (ready) channel.send({ type: 'broadcast', event: 'patch', payload });
   });
 
-  channel.on('broadcast', { event: 'patch' }, ({ payload }) => onPatch(payload));
-  channel.on('broadcast', { event: 'hello' }, () => {
-    channel.send({ type: 'broadcast', event: 'patch', payload: getState() });
-  });
-  channel.on('presence', { event: 'sync' }, () => {
-    onPeers(Object.keys(channel.presenceState()).length, room);
-  });
+  import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm').then(({ createClient }) => {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    channel = supabase.channel(`asc-ar-${room}`, {
+      config: { broadcast: { self: false }, presence: { key: clientId } },
+    });
 
-  channel.subscribe(async (status, err) => {
-    console.log('[sync] channel status:', status, err || '');
-    onStatus?.(status, err);
-    if (status !== 'SUBSCRIBED') return;
-    await channel.track({ joinedAt: Date.now() });
-    channel.send({ type: 'broadcast', event: 'hello', payload: {} });
-  });
+    channel.on('broadcast', { event: 'patch' }, ({ payload }) => onPatch(payload));
+    channel.on('broadcast', { event: 'hello' }, () => {
+      channel.send({ type: 'broadcast', event: 'patch', payload: getState() });
+    });
+    channel.on('presence', { event: 'sync' }, () => {
+      onPeers(Object.keys(channel.presenceState()).length, room);
+    });
 
-  let pending = null;
-  let timer = null;
-
-  function flush() {
-    timer = null;
-    if (!pending) return;
-    channel.send({ type: 'broadcast', event: 'patch', payload: pending });
-    pending = null;
-  }
-
-  function send(patch, throttle = false) {
-    pending = { ...(pending || {}), ...patch };
-    if (!throttle) {
-      clearTimeout(timer);
-      flush();
-    } else if (!timer) {
-      timer = setTimeout(flush, THROTTLE_MS);
-    }
-  }
+    channel.subscribe(async (status, err) => {
+      console.log('[sync] supabase channel status:', status, err || '');
+      onStatus?.(status, err);
+      if (status !== 'SUBSCRIBED') return;
+      ready = true;
+      await channel.track({ joinedAt: Date.now() });
+      channel.send({ type: 'broadcast', event: 'hello', payload: {} });
+    });
+  }).catch(err => { console.error('[sync]', err); onStatus?.('CHANNEL_ERROR', err); });
 
   return { send, room };
+}
+
+function initSync(opts) {
+  return SYNC_PROVIDER === 'supabase' ? initSupabaseSync(opts) : initMqttSync(opts);
 }
 // ═══════════════════════════════════════════════════════
 //  CONFIG — edit manifest.json to point to your GLB files
