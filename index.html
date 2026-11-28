@@ -380,7 +380,7 @@
   <div id="top-bar">
     <div class="pill" id="marker-status">SEARCHING FOR MARKER</div>
     <div class="pill" id="step-pill">STEP 1 / 1</div>
-    <div class="pill" id="peer-pill">1 VIEWER</div>
+    <div class="pill" id="peer-pill">SYNC · CONNECTING</div>
   </div>
 
   <div id="playbar">
@@ -430,7 +430,11 @@ const SUPABASE_URL = 'https://YOUR-PROJECT-REF.supabase.co';
 const SUPABASE_ANON_KEY = 'YOUR-ANON-PUBLIC-KEY';
 const THROTTLE_MS = 50; // max ~20 transform messages per second
 
-function initSync({ getState, onPatch, onPeers }) {
+function initSync({ getState, onPatch, onPeers, onStatus }) {
+  if (SUPABASE_URL.includes('YOUR-PROJECT') || SUPABASE_ANON_KEY.includes('YOUR-ANON')) {
+    onStatus?.('NOT_CONFIGURED');
+    return null;
+  }
   const room = new URLSearchParams(location.search).get('room') || 'default';
   const clientId = crypto.randomUUID();
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -447,10 +451,12 @@ function initSync({ getState, onPatch, onPeers }) {
     channel.send({ type: 'broadcast', event: 'patch', payload: getState() });
   });
   channel.on('presence', { event: 'sync' }, () => {
-    onPeers(Object.keys(channel.presenceState()).length);
+    onPeers(Object.keys(channel.presenceState()).length, room);
   });
 
-  channel.subscribe(async (status) => {
+  channel.subscribe(async (status, err) => {
+    console.log('[sync] channel status:', status, err || '');
+    onStatus?.(status, err);
     if (status !== 'SUBSCRIBED') return;
     await channel.track({ joinedAt: Date.now() });
     channel.send({ type: 'broadcast', event: 'hello', payload: {} });
@@ -770,7 +776,11 @@ async function startAR() {
     sync = initSync({
       getState,
       onPatch: applyRemote,
-      onPeers: n => { peerPill.textContent = `${n} VIEWER${n === 1 ? '' : 'S'}`; },
+      onPeers: (n, room) => { peerPill.textContent = `ROOM ${room} · ${n} VIEWER${n === 1 ? '' : 'S'}`; },
+      onStatus: s => {
+        if (s === 'NOT_CONFIGURED') peerPill.textContent = 'SYNC OFF · ADD KEYS';
+        else if (s !== 'SUBSCRIBED') peerPill.textContent = `SYNC · ${s}`;
+      },
     });
     // Heartbeat: the device that pressed play keeps the others from drifting
     setInterval(() => {
